@@ -171,111 +171,320 @@ class _SetupPageState extends State<SetupPage> {
   );
 }
 
-class X01GamePage extends StatefulWidget {
-  final String gameName;
-  final int startingScore;
-  final List<String> playerNames;
-  const X01GamePage({super.key, required this.gameName, required this.startingScore, required this.playerNames});
+class GamePage extends StatefulWidget {
+  final GameInfo game;
+  final List<String> players;
+  const GamePage({super.key, required this.game, required this.players});
   @override
-  State<X01GamePage> createState() => _X01GamePageState();
+  State<GamePage> createState() => _GamePageState();
 }
 
-class _X01GamePageState extends State<X01GamePage> {
+class _GamePageState extends State<GamePage> {
   late List<int> scores;
+  late List<int> darts;
+  late List<int> turns;
+  late List<int> halfRounds;
+  late List<List<int>> cricketMarks;
+  late List<int> cricketScore;
   int current = 0;
-  int turnScore = 0;
+  int turnTotal = 0;
+  final turnDarts = <int>[];
   final history = <List<int>>[];
+
+  static const cricketTargets = [20, 19, 18, 17, 16, 15, 25];
+
+  bool get isX01 => widget.game.start > 0;
+  bool get isCricket => widget.game.name == 'Cricket';
+  bool get isHalfIt => widget.game.name == 'Half-It';
+  bool get isBobs => widget.game.name == "Bob's 27";
 
   @override
   void initState() {
     super.initState();
-    scores = List.filled(widget.playerNames.length, widget.startingScore);
+    scores = List.filled(widget.players.length, widget.game.start);
+    darts = List.filled(widget.players.length, 0);
+    turns = List.filled(widget.players.length, 0);
+    halfRounds = List.filled(widget.players.length, 0);
+    cricketMarks = List.generate(widget.players.length, (_) => List.filled(7, 0));
+    cricketScore = List.filled(widget.players.length, 0);
   }
 
-  void addScore(int value) {
-    if (widget.startingScore == 0) return;
-    setState(() => turnScore += value);
-  }
-
-  void undoTurn() => setState(() => turnScore = 0);
-
-  void submitTurn() {
-    if (widget.startingScore == 0) {
-      setState(() => current = (current + 1) % scores.length);
-      return;
-    }
-    final remaining = scores[current] - turnScore;
-    final bust = remaining < 0 || remaining == 1;
+  void addDart(int value) {
+    if (turnDarts.length >= 3) return;
     setState(() {
-      history.add(List.of(scores));
-      if (!bust) scores[current] = remaining;
-      if (remaining == 0) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => AlertDialog(
-            title: const Text('🎯 Game shot!'),
-            content: Text(widget.playerNames[current] + ' wint ' + widget.gameName + '!'),
-            actions: [TextButton(onPressed: () => Navigator.popUntil(context, (r) => r.isFirst), child: const Text('NAAR DASHBOARD'))],
-          ),
-        );
-        return;
-      }
-      turnScore = 0;
-      current = (current + 1) % scores.length;
+      turnDarts.add(value);
+      turnTotal += value;
     });
   }
 
+  void undoDart() {
+    if (turnDarts.isEmpty) return;
+    setState(() => turnTotal -= turnDarts.removeLast());
+  }
+
+  void finishTurn() {
+    if (turnDarts.isEmpty) return;
+    if (isX01) return _finishX01();
+    if (isHalfIt) return _finishHalfIt();
+    if (isBobs) return _finishBobs();
+  }
+
+  void _finishX01() {
+    final remaining = scores[current] - turnTotal;
+    final bust = remaining < 0 || remaining == 1;
+    history.add(List.of(scores));
+    setState(() {
+      darts[current] += turnDarts.length;
+      turns[current]++;
+      if (!bust) scores[current] = remaining;
+    });
+    if (remaining == 0) {
+      _winner();
+      return;
+    }
+    if (bust) _snack('Bust! Geen score.');
+    _next();
+  }
+
+  void _finishHalfIt() {
+    const targets = [20, 19, 18, 17, 16, 15, 25, 50];
+    final round = halfRounds[current];
+    final target = targets[round.clamp(0, targets.length - 1)];
+    final hit = turnDarts.contains(target);
+    setState(() {
+      darts[current] += turnDarts.length;
+      turns[current]++;
+      halfRounds[current]++;
+      if (hit) {
+        scores[current] += turnTotal;
+      } else {
+        scores[current] = scores[current] ~/ 2;
+      }
+    });
+    if (halfRounds[current] >= targets.length) {
+      _winnerByHighestScore();
+      return;
+    }
+    _next();
+  }
+
+  void _finishBobs() {
+    const targets = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25];
+    final target = targets[turns[current].clamp(0, targets.length - 1)];
+    final hit = turnDarts.contains(target);
+    setState(() {
+      darts[current] += turnDarts.length;
+      turns[current]++;
+      if (hit) {
+        scores[current] += turnTotal;
+      } else {
+        scores[current] -= 27;
+      }
+    });
+    if (turns[current] >= targets.length) {
+      _winnerByHighestScore();
+      return;
+    }
+    _next();
+  }
+
+  void cricketMark(int target, int amount) {
+    final idx = cricketTargets.indexOf(target);
+    if (idx < 0) return;
+    setState(() {
+      final before = cricketMarks[current][idx];
+      final after = (before + amount).clamp(0, 3);
+      cricketMarks[current][idx] = after;
+      if (before < 3 && after == 3) cricketScore[current] += target;
+    });
+  }
+
+  void finishCricket() {
+    if (cricketScore[current] >= 0) {
+      _next();
+    }
+  }
+
+  void _next() {
+    turnDarts.clear();
+    turnTotal = 0;
+    setState(() => current = (current + 1) % widget.players.length);
+  }
+
+  void _winner() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('🎯 GAME SHOT!'),
+        content: Text(widget.players[current] + ' wint ' + widget.game.name + '!'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+            child: const Text('NAAR DASHBOARD'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _winnerByHighestScore() {
+    final best = scores.reduce((a, b) => a > b ? a : b);
+    final winner = scores.indexOf(best);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('🏆 WEDSTRIJD KLAAR'),
+        content: Text(widget.players[winner] + ' wint met ' + best.toString() + ' punten!'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+            child: const Text('NAAR DASHBOARD'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  List<String> checkout(int score) {
+    const routes = <int, String>{
+      170: 'T20 T20 Bull', 167: 'T20 T19 Bull', 164: 'T20 T18 Bull',
+      161: 'T20 T17 Bull', 160: 'T20 T20 D20', 158: 'T20 T20 D19',
+      157: 'T20 T19 D20', 156: 'T20 T20 D18', 155: 'T20 T19 D19',
+      154: 'T20 T18 D20', 153: 'T20 T19 D18', 152: 'T20 T20 D16',
+      151: 'T20 T17 D20', 150: 'T20 T18 D18', 147: 'T20 T17 D18',
+      140: 'T20 T20 D10', 132: 'Bull T14 D20', 130: 'T20 T18 D8',
+      120: 'T20 20 D20', 110: 'T20 18 D16', 100: 'T20 D20',
+    };
+    if (routes.containsKey(score)) return [routes[score]!];
+    if (score >= 2 && score <= 40 && score.isEven) return ['D' + (score ~/ 2).toString()];
+    return [];
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: Text(widget.gameName),
-      actions: [IconButton(onPressed: history.isEmpty ? null : () => setState(() { scores = history.removeLast(); turnScore = 0; }), icon: const Icon(Icons.undo))],
-    ),
-    body: Column(
-      children: [
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: scores.length,
-            itemBuilder: (_, i) => Card(
-              color: i == current ? const Color(0xFF27220F) : const Color(0xFF15181D),
+  Widget build(BuildContext context) {
+    if (isCricket) return _cricketView();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.game.name),
+        actions: [
+          IconButton(
+            onPressed: history.isEmpty ? null : () => setState(() {
+              scores = history.removeLast();
+              turnDarts.clear();
+              turnTotal = 0;
+            }),
+            icon: const Icon(Icons.undo),
+          ),
+        ],
+      ),
+      body: Column(children: [
+        Expanded(child: ListView(
+          padding: const EdgeInsets.all(10),
+          children: [
+            ...List.generate(widget.players.length, (i) => Card(
+              color: i == current ? const Color(0xFF28220F) : const Color(0xFF15181D),
               child: ListTile(
                 leading: CircleAvatar(child: Text((i + 1).toString())),
-                title: Text(widget.playerNames[i], style: const TextStyle(fontWeight: FontWeight.w700)),
-                subtitle: Text(i == current ? 'Aan de beurt' : 'Wacht'),
+                title: Text(widget.players[i], style: const TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text(i == current ? 'Aan de beurt • ' + darts[i].toString() + ' darts' : turns[i].toString() + ' beurten'),
                 trailing: Text(scores[i].toString(), style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900)),
               ),
+            )),
+            if (isX01 && checkout(scores[current]).isNotEmpty)
+              Card(child: ListTile(
+                leading: const Icon(Icons.auto_awesome),
+                title: const Text('Checkout'),
+                subtitle: Text(checkout(scores[current]).join(' / ')),
+              )),
+            if (isHalfIt)
+              Card(child: ListTile(
+                leading: const Icon(Icons.flag),
+                title: Text('Ronde ' + (halfRounds[current] + 1).toString()),
+                subtitle: Text('Target: ' + [20, 19, 18, 17, 16, 15, 25, 50][halfRounds[current].clamp(0, 7)].toString()),
+              )),
+            if (isBobs)
+              Card(child: ListTile(
+                leading: const Icon(Icons.track_changes),
+                title: Text('Ronde ' + (turns[current] + 1).toString()),
+                subtitle: const Text('Raak je target of verlies 27 punten.'),
+              )),
+          ],
+        )),
+        _keypad(),
+      ]),
+    );
+  }
+
+  Widget _keypad() => Container(
+    padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
+    decoration: const BoxDecoration(color: Color(0xFF111419), borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+    child: SafeArea(top: false, child: Column(children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(widget.players[current], style: const TextStyle(fontWeight: FontWeight.w800)),
+        Text('Beurt: ' + turnTotal.toString() + ' • ' + turnDarts.length.toString() + '/3', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+      ]),
+      const SizedBox(height: 8),
+      Wrap(spacing: 6, runSpacing: 6, children: [
+        for (final n in [0, 1, 5, 10, 15, 20, 25, 30, 40, 50, 60])
+          SizedBox(width: 62, child: FilledButton(
+            onPressed: n == 0 ? null : () => addDart(n),
+            child: Text(n.toString()),
+          )),
+      ]),
+      const SizedBox(height: 7),
+      Row(children: [
+        Expanded(child: OutlinedButton(onPressed: turnDarts.isEmpty ? null : undoDart, child: const Text('LAATSTE DART WIS'))),
+        const SizedBox(width: 8),
+        Expanded(child: FilledButton(onPressed: turnDarts.isEmpty ? null : finishTurn, child: const Text('BEURT OPSLAAN'))),
+      ]),
+    ])),
+  );
+
+  Widget _cricketView() => Scaffold(
+    appBar: AppBar(title: const Text('Cricket'), actions: [
+      IconButton(onPressed: () {}, icon: const Icon(Icons.volume_up_outlined)),
+    ]),
+    body: Column(children: [
+      Expanded(child: ListView(
+        padding: const EdgeInsets.all(10),
+        children: [
+          ...List.generate(widget.players.length, (p) => Card(
+            color: p == current ? const Color(0xFF28220F) : const Color(0xFF15181D),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text(widget.players[p], style: const TextStyle(fontWeight: FontWeight.w800)),
+                  Text(cricketScore[p].toString(), style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+                ]),
+                const SizedBox(height: 10),
+                Row(children: List.generate(7, (i) => Expanded(child: Center(
+                  child: Text(
+                    cricketTargets[i].toString() + '\n' + '×' * cricketMarks[p][i],
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                )))),
+              ]),
             ),
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-          decoration: const BoxDecoration(color: Color(0xFF111419), borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-          child: SafeArea(
-            top: false,
-            child: Column(children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text(widget.playerNames[current], style: const TextStyle(fontWeight: FontWeight.w700)),
-                Text('Turn: ' + turnScore.toString(), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-              ]),
-              const SizedBox(height: 10),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                for (final n in [1, 5, 10, 20, 25, 50])
-                  SizedBox(width: 72, child: FilledButton(onPressed: widget.startingScore == 0 ? null : () => addScore(n), child: Text(n.toString()))),
-              ]),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(child: OutlinedButton(onPressed: turnScore == 0 ? null : undoTurn, child: const Text('WIS'))),
-                const SizedBox(width: 10),
-                Expanded(flex: 2, child: FilledButton(onPressed: submitTurn, child: const Text('BEURT OPSLAAN'))),
-              ]),
-              if (widget.startingScore == 0)
-                Padding(padding: const EdgeInsets.only(top: 8), child: Text('Eigen scorebord voor dit spel komt in de volgende versie.', style: TextStyle(color: Colors.grey.shade500, fontSize: 12))),
-            ]),
-          ),
-        ),
-      ],
-    ),
+          )),
+        ],
+      )),
+      Container(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
+        color: const Color(0xFF111419),
+        child: SafeArea(top: false, child: Column(children: [
+          Wrap(spacing: 6, runSpacing: 6, children: cricketTargets.map((n) => SizedBox(width: 66, child: FilledButton(onPressed: () => cricketMark(n, 1), child: Text(n.toString())))).toList()),
+          const SizedBox(height: 8),
+          SizedBox(width: double.infinity, child: FilledButton(onPressed: finishCricket, child: const Text('BEURT OPSLAAN'))),
+        ])),
+      ),
+    ]),
   );
 }
