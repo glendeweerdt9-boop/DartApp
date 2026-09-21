@@ -171,6 +171,12 @@ class _SetupPageState extends State<SetupPage> {
   );
 }
 
+class GameInfo {
+  final String name;
+  final int start;
+  const GameInfo(this.name, this.start);
+}
+
 class GamePage extends StatefulWidget {
   final GameInfo game;
   final List<String> players;
