@@ -158,7 +158,7 @@ class _SetupPageState extends State<SetupPage> {
         )),
         const SizedBox(height: 16),
         FilledButton.icon(
-          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => X01GamePage(
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GamePage(
             gameName: widget.gameName,
             startingScore: widget.startingScore,
             playerNames: List.generate(players, (i) => names[i].text),
