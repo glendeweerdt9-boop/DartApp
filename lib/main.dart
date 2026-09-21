@@ -1,6 +1,20 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'auth_service.dart';
+import 'firestore_service.dart';
+import 'firebase_options.dart';
 
-void main() => runApp(const DartApp());
+final authService = AuthService();
+final firestoreService = FirestoreService();
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  runApp(const DartApp());
+}
 
 class DartApp extends StatelessWidget {
   const DartApp({super.key});
@@ -25,12 +39,97 @@ class DartApp extends StatelessWidget {
         ),
       ),
     ),
-    home: const LoginPage(),
+    home: const AuthGate(),
   );
 }
 
-class LoginPage extends StatelessWidget {
+class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final email = TextEditingController();
+  final password = TextEditingController();
+  final name = TextEditingController();
+  bool register = false;
+  bool busy = false;
+
+  Future<void> submit() async {
+    if (email.text.trim().isEmpty || password.text.isEmpty) return;
+    setState(() => busy = true);
+    try {
+      UserCredential credential;
+      if (register) {
+        credential = await authService.registerWithEmail(
+          email.text,
+          password.text,
+          name.text,
+        );
+      } else {
+        credential = await authService.signInWithEmail(
+          email.text,
+          password.text,
+        );
+      }
+      if (credential.user != null) {
+        await firestoreService.ensureUserProfile(credential.user!);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) _error(e.message ?? 'Inloggen mislukt.');
+    } catch (e) {
+      if (mounted) _error(e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> google() async {
+    setState(() => busy = true);
+    try {
+      final credential = await authService.signInWithGoogle();
+      if (credential?.user != null) {
+        await firestoreService.ensureUserProfile(credential!.user!);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) _error(e.message ?? 'Google-login mislukt.');
+    } catch (e) {
+      if (mounted) _error(e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> resetPassword() async {
+    if (email.text.trim().isEmpty) {
+      _error('Vul eerst je e-mailadres in.');
+      return;
+    }
+    try {
+      await authService.sendPasswordReset(email.text);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Resetlink is verstuurd.')),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) _error(e.message ?? 'Resetten mislukt.');
+    }
+  }
+
+  void _error(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    name.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
@@ -47,15 +146,30 @@ class LoginPage extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text('Play. Score. Improve.', style: TextStyle(color: Colors.grey.shade400)),
                 const SizedBox(height: 40),
-                const TextField(decoration: InputDecoration(labelText: 'E-mail', prefixIcon: Icon(Icons.email_outlined))),
+                if (register) ...[
+                  TextField(controller: name, decoration: const InputDecoration(labelText: 'Naam', prefixIcon: Icon(Icons.person_outline))),
+                  const SizedBox(height: 14),
+                ],
+                TextField(controller: email, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'E-mail', prefixIcon: Icon(Icons.email_outlined))),
                 const SizedBox(height: 14),
-                const TextField(obscureText: true, decoration: InputDecoration(labelText: 'Wachtwoord', prefixIcon: Icon(Icons.lock_outline))),
+                TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: 'Wachtwoord', prefixIcon: Icon(Icons.lock_outline))),
                 const SizedBox(height: 20),
-                SizedBox(width: double.infinity, height: 52, child: FilledButton(onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardPage())), child: const Text('INLOGGEN'))),
+                SizedBox(width: double.infinity, height: 52, child: FilledButton(
+                  onPressed: busy ? null : submit,
+                  child: Text(busy ? 'EVEN GEDULD...' : (register ? 'ACCOUNT AANMAKEN' : 'INLOGGEN')),
+                )),
                 const SizedBox(height: 12),
-                SizedBox(width: double.infinity, height: 52, child: OutlinedButton.icon(onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardPage())), icon: const Icon(Icons.g_mobiledata), label: const Text('DOORGAAN MET GOOGLE'))),
-                TextButton(onPressed: () {}, child: const Text('Wachtwoord vergeten?')),
-                TextButton(onPressed: () {}, child: const Text('Account aanmaken')),
+                SizedBox(width: double.infinity, height: 52, child: OutlinedButton.icon(
+                  onPressed: busy ? null : google,
+                  icon: const Icon(Icons.g_mobiledata),
+                  label: const Text('DOORGAAN MET GOOGLE'),
+                )),
+                if (!register)
+                  TextButton(onPressed: busy ? null : resetPassword, child: const Text('Wachtwoord vergeten?')),
+                TextButton(
+                  onPressed: busy ? null : () => setState(() => register = !register),
+                  child: Text(register ? 'Ik heb al een account' : 'Account aanmaken'),
+                ),
               ],
             ),
           ),
@@ -65,8 +179,25 @@ class LoginPage extends StatelessWidget {
   );
 }
 
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+  @override
+  Widget build(BuildContext context) => StreamBuilder<User?>(
+    stream: authService.authStateChanges,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+      final user = snapshot.data;
+      if (user == null) return const LoginPage();
+      return DashboardPage(user: user);
+    },
+  );
+}
+
 class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key});
+  final User user;
+  const DashboardPage({super.key, required this.user});
   static const games = [
     ('501', Icons.looks_one, 501), ('301', Icons.looks_two, 301),
     ('701', Icons.looks_3, 701), ('Cricket', Icons.sports_score, 0),
@@ -74,7 +205,7 @@ class DashboardPage extends StatelessWidget {
   ];
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('DARTAPP 🎯'), actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.settings_outlined))]),
+    appBar: AppBar(title: const Text('DARTAPP 🎯'), actions: [IconButton(onPressed: () => authService.signOut(), icon: const Icon(Icons.logout)), IconButton(onPressed: () {}, icon: const Icon(Icons.settings_outlined))]),
     body: ListView(
       padding: const EdgeInsets.all(18),
       children: [
@@ -95,7 +226,7 @@ class DashboardPage extends StatelessWidget {
           ),
         )),
         const SizedBox(height: 12),
-        const Text('Jouw profiel', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+        Text(user.displayName?.isNotEmpty == true ? user.displayName! : (user.email ?? 'Jouw profiel'), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
         const SizedBox(height: 10),
         const Row(children: [
           Expanded(child: StatCard(title: 'Matches', value: '0')),
@@ -159,9 +290,8 @@ class _SetupPageState extends State<SetupPage> {
         const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GamePage(
-            gameName: widget.gameName,
-            startingScore: widget.startingScore,
-            playerNames: List.generate(players, (i) => names[i].text),
+            game: GameInfo(widget.gameName, widget.startingScore),
+            players: List.generate(players, (i) => names[i].text.trim().isEmpty ? 'Speler ' + (i + 1).toString() : names[i].text.trim()),
           ))),
           icon: const Icon(Icons.play_arrow),
           label: const Text('START WEDSTRIJD'),
