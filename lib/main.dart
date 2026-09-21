@@ -447,7 +447,20 @@ class _GamePageState extends State<GamePage> {
     setState(() => current = (current + 1) % widget.players.length);
   }
 
+  Future<void> _saveFinishedMatch(int winnerIndex) async {
+    final user = authService.currentUser;
+    if (user == null) return;
+    await firestoreService.saveMatch(
+      user: user,
+      game: widget.game.name,
+      players: widget.players,
+      winnerIndex: winnerIndex,
+      scores: scores,
+    );
+  }
+
   void _winner() {
+    _saveFinishedMatch(current);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -467,6 +480,7 @@ class _GamePageState extends State<GamePage> {
   void _winnerByHighestScore() {
     final best = scores.reduce((a, b) => a > b ? a : b);
     final winner = scores.indexOf(best);
+    _saveFinishedMatch(winner);
     showDialog(
       context: context,
       barrierDismissible: false,
