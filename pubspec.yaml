@@ -1,7 +1,7 @@
 name: dart_app
 description: A modern cross-platform darts scoring app.
 publish_to: "none"
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
